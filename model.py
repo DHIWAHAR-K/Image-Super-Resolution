@@ -1,47 +1,58 @@
-#model.py
+# model.py
 import tensorflow as tf
-from tensorflow.keras.layers import Input, Conv2D, MaxPool2D, Conv2DTranspose, Concatenate, BatchNormalization, Activation
-from tensorflow.keras.models import Model
+from tensorflow import keras
+from tensorflow.keras import layers
 
-def conv_block(input, num_filters):
-    x = Conv2D(num_filters, 3, padding="same")(input)
-    x = BatchNormalization()(x)    
-    x = Activation("relu")(x)
-    x = Conv2D(num_filters, 3, padding="same")(x)
-    x = BatchNormalization()(x)  
-    x = Activation("relu")(x)
+class EDSRModel(tf.keras.Model):
+    def train_step(self, data):
+        x, y = data
+
+        with tf.GradientTape() as tape:
+            y_pred = self(x, training=True)
+            loss = self.compiled_loss(y, y_pred, regularization_losses=self.losses)
+
+        trainable_vars = self.trainable_variables
+        gradients = tape.gradient(loss, trainable_vars)
+        self.optimizer.apply_gradients(zip(gradients, trainable_vars))
+        self.compiled_metrics.update_state(y, y_pred)
+        return {m.name: m.result() for m in self.metrics}
+
+    def predict_step(self, x):
+        x = tf.cast(tf.expand_dims(x, axis=0), tf.float32)
+        super_resolution_img = self(x, training=False)
+        super_resolution_img = tf.clip_by_value(super_resolution_img, 0, 255)
+        super_resolution_img = tf.round(super_resolution_img)
+        super_resolution_img = tf.squeeze(
+            tf.cast(super_resolution_img, tf.uint8), axis=0
+        )
+        return super_resolution_img
+
+def ResBlock(inputs):
+    x = layers.Conv2D(64, 3, padding="same", activation="relu")(inputs)
+    x = layers.Conv2D(64, 3, padding="same")(x)
+    x = layers.Add()([inputs, x])
     return x
 
-def encoder_block(input, num_filters):
-    x = conv_block(input, num_filters)
-    p = MaxPool2D((2, 2))(x)
-    return x, p   
-
-def decoder_block(input, skip_features, num_filters):
-    x = Conv2DTranspose(num_filters, (2, 2), strides=2, padding="same")(input)
-    x = Concatenate()([x, skip_features])
-    x = conv_block(x, num_filters)
+def Upsampling(inputs, factor=2, **kwargs):
+    x = layers.Conv2D(64 * (factor ** 2), 3, padding="same", **kwargs)(inputs)
+    x = tf.nn.depth_to_space(x, block_size=factor)
+    x = layers.Conv2D(64 * (factor ** 2), 3, padding="same", **kwargs)(x)
+    x = tf.nn.depth_to_space(x, block_size=factor)
     return x
 
-def build_unet(input_shape):
-    inputs = Input(input_shape)
-    s1, p1 = encoder_block(inputs, 64)
-    s2, p2 = encoder_block(p1, 128)
-    s3, p3 = encoder_block(p2, 256)
-    s4, p4 = encoder_block(p3, 512)
-    b1 = conv_block(p4, 1024)
-    d1 = decoder_block(b1, s4, 512)
-    d2 = decoder_block(d1, s3, 256)
-    d3 = decoder_block(d2, s2, 128)
-    d4 = decoder_block(d3, s1, 64)
-    outputs = Conv2D(3, 1, padding="same", activation="LeakyReLU")(d4)
-    model = Model(inputs, outputs, name="U-Net")
-    return model
+def make_model(num_filters, num_of_residual_blocks):
+    input_layer = layers.Input(shape=(None, None, 3))
+    x = layers.Rescaling(scale=1.0 / 255)(input_layer)
+    x = x_new = layers.Conv2D(num_filters, 3, padding="same")(x)
 
-def pixel_mse_loss(x, y):
-    return tf.reduce_mean((x - y) ** 2)
+    for _ in range(num_of_residual_blocks):
+        x_new = ResBlock(x_new)
 
-def compile_model(model):
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), 
-                  loss=pixel_mse_loss, metrics=['acc'])
-    return model
+    x_new = layers.Conv2D(num_filters, 3, padding="same")(x_new)
+    x = layers.Add()([x, x_new])
+
+    x = Upsampling(x)
+    x = layers.Conv2D(3, 3, padding="same")(x)
+
+    output_layer = layers.Rescaling(scale=255)(x)
+    return EDSRModel(input_layer, output_layer)
