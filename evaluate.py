@@ -1,10 +1,10 @@
 #evaluate.py
 import numpy as np
 import tensorflow as tf
-import matplotlib.pyplot as plt
-from data_loader import get_datasets
-from model import build_unet
 from utils import plot_images
+import matplotlib.pyplot as plt
+from model import pixel_mse_loss
+from data_loader import get_datasets
 
 def PSNR(y_true, y_pred):
     mse = tf.reduce_mean((y_true - y_pred) ** 2)
