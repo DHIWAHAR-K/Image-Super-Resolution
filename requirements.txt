@@ -1,0 +1,7 @@
+#requirements.txt
+tensorflow
+scipy
+tqdm
+opencv-python-headless
+matplotlib
+scikit-image
