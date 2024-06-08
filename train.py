@@ -1,4 +1,5 @@
 #train.py
+import os
 import tensorflow as tf
 from model import model
 from metrics import PSNR
@@ -10,9 +11,12 @@ optim_edsr = tf.keras.optimizers.Adam(
         boundaries=[5000], values=[1e-4, 5e-5]
     )
 )
+
+os.makedirs("model", exist_ok=True)
+
 # Compiling model with loss as mean absolute error(L1 Loss) and metric as psnr
 model.compile(optimizer=optim_edsr, loss="mae", metrics=[PSNR])
 # Training for more epochs will improve results
 model.fit(train_ds, epochs=100, steps_per_epoch=200, validation_data=val_ds)
 
-model.save_weights("model.h5")
+model.save_weights("model/model.h5")
